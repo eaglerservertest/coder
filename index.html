@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>coder.py ブラウザ内実行</title>
+    <!-- Pyodide（ブラウザでPythonを動かすライブラリ）の読み込み -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { font-weight: bold; color: #555; margin-bottom: 10px; }
+        #result { margin-top: 20px; padding: 15px; border: 1px solid #ccc; background: #f9f9f9; white-space: pre-wrap; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <h1>coder.py ブラウザ内実行ツール</h1>
+    <div id="status">Python環境を準備中...（初回は数秒かかります）</div>
+    
+    <button id="runBtn" onclick="runPythonCode()" disabled>coder.py を実行する</button>
+
+    <div id="result">実行結果がここに表示されます...</div>
+
+    <script>
+        let pyodide;
+
+        // 1. ページ読み込み時にブラウザ用Python環境を初期化
+        async function initPython() {
+            try {
+                pyodide = await loadPyodide();
+                document.getElementById('status').innerText = 'Python環境の準備完了！';
+                document.getElementById('runBtn').disabled = false;
+            } catch (err) {
+                document.getElementById('status').innerText = 'Python環境の起動に失敗しました: ' + err.message;
+            }
+        }
+        initPython();
+
+        // 2. ボタンを押したときに coder.py を読み込んで実行
+        async function runPythonCode() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerText = 'coder.py を読み込んで実行中...';
+
+            try {
+                // 同じフォルダにある coder.py の中身をテキストとして取得
+                const response = await fetch('coder.py');
+                if (!response.ok) {
+                    throw new Error('coder.py が見つからないか、読み込めません。同じフォルダにあるか確認してください。');
+                }
+                const pythonCode = await response.text();
+
+                // 標準出力をキャプチャする設定（print文の結果を受け取るため）
+                pyodide.runPython(`
+                    import sys
+                    import io
+                    sys.stdout = io.StringIO()
+                `);
+
+                // Pythonコードを実行
+                await pyodide.runPythonAsync(pythonCode);
+
+                // printされた結果を取得して表示
+                const stdout = pyodide.runPython("sys.stdout.getvalue()");
+                resultDiv.innerText = stdout || "（プログラムは正常終了しましたが、出力はありませんでした）";
+
+            } catch (err) {
+                resultDiv.innerText = 'エラー発生:\n' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
