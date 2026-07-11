@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高速実行</title>
+    <!-- 1. 最低限のコア機能だけを先行して非同期読み込み -->
+    <link rel="preload" href="https://jsdelivr.net" as="script">
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; background: #fdfdfd; color: #333; }
+        button { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 6px; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; opacity: 0.6; }
+        #status { font-size: 14px; color: #666; margin-bottom: 12px; }
+        #result { margin-top: 15px; padding: 15px; border: 1px solid #ddd; background: #f8f9fa; border-radius: 6px; white-space: pre-wrap; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <div id="status">⚡ エンジン高速起動中...</div>
+    <button id="runBtn" onclick="run()" disabled>実行</button>
+    <div id="result">結果待機中...</div>
+
+    <!-- 2. deferを使い、HTMLの描画を一切邪魔せずに読み込む -->
+    <script src="https://jsdelivr.net" defer></script>
+    <script>
+        let py;
+        
+        // 画面が表示されたら即座にPython環境を並行初期化
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Core版を指定して読み込み・初期化速度を最大化
+                py = await loadPyodide({ indexURL: "https://jsdelivr.net" });
+                
+                // 標準出力を高速にキャプチャする準備
+                await py.runPythonAsync(`import sys, io; sys.stdout = io.StringIO()`);
+                
+                document.getElementById('status').innerText = '✅ 準備完了';
+                document.getElementById('runBtn').disabled = false;
+            } catch (e) {
+                document.getElementById('status').innerText = '❌ 起動失敗: ' + e.message;
+            }
+        });
+
+        async function run() {
+            const res = document.getElementById('result');
+            res.innerText = '計算中...';
+
+            // ★ここに coder.py の中身を貼り付けてください
+            const code = `
+【import hashlib
+import random
+import string
+import os
+from itertools import cycle
+
+# ソルト候補文字（1~z, 0~9）をあらかじめ高速検索用に定義
+SALT_CHARS = (string.ascii_lowercase + string.digits).encode('utf-8')
+
+def generate_base_key(k1: str, k2: str, k3: str) -> bytes:
+    """3つのキーから共通のベースハッシュ鍵（バイト列）を高速生成"""
+    return hashlib.sha256((k1 + k2 + k3).encode('utf-8')).digest()
+
+def fast_encrypt(plain_text: str, base_key: bytes) -> str:
+    """[高速化] 可変長（6〜12文字）暗号化、全体26文字制限対応"""
+    text_bytes = plain_text.encode('utf-8')
+    encrypted_tokens = []
+    
+    # 高速ランダムチョイスのためのローカル変数化
+    rc = random.choice
+    
+    for b in text_bytes:
+        # 1文字あたりの総長をランダム決定 (6〜12)
+        total_length = random.randint(6, 12)
+        length_marker = f"{total_length:x}"
+        
+        # ソルト生成と使い捨てハッシュ計算
+        salt_len = total_length - 1 - 2
+        salt_bytes = bytes([rc(SALT_CHARS) for _ in range(salt_len)])
+        
+        # ハッシュ結合
+        char_key = hashlib.sha256(base_key + salt_bytes).digest()
+        
+        # ビット演算(XOR)
+        encrypted_byte = b ^ char_key[0]
+        
+        # トークンを結合
+        token = length_marker + salt_bytes.decode('utf-8') + f"{encrypted_byte:02x}"
+        encrypted_tokens.append(token)
+        
+    result = "".join(encrypted_tokens)
+    return result
+
+def fast_decrypt(cipher_text: str, base_key: bytes) -> str:
+    """[高速化] マーカーを読み解きながら高速に一括スライス復号"""
+    decrypted_bytes = bytearray()
+    idx = 0
+    cipher_len = len(cipher_text)
+    
+    try:
+        # C言語ライブラリの処理速度を活かすため、インデックスをジャンプさせて高速化
+        while idx < cipher_len:
+            # マーカーから長さを取得
+            total_length = int(cipher_text[idx], 16)
+            
+            # 必要な部分をスライス（一括切り出し）
+            salt = cipher_text[idx + 1 : idx + total_length - 2].encode('utf-8')
+            hex_code = cipher_text[idx + total_length - 2 : idx + total_length]
+            
+            # 鍵の復元
+            char_key = hashlib.sha256(base_key + salt).digest()
+            encrypted_byte = int(hex_code, 16)
+            
+            # 復号（XOR）してバイト配列に追加
+            decrypted_bytes.append(encrypted_byte ^ char_key[0])
+            
+            idx += total_length
+            
+        return decrypted_bytes.decode('utf-8')
+    except Exception:
+        return "【エラー】復号失敗。鍵が違うかデータが破損しています。"
+
+def handle_file_operations(mode: str, base_key: bytes):
+    """[高速化] バッファを介さずOSレベルのファイルI/Oで一瞬でロード/保存"""
+    file_path = input("対象のファイル名（例: data.txt）を入力してください: ").strip()
+    
+    if mode == 'C':
+        if not os.path.exists(file_path):
+            print("エラー: 指定されたファイルが存在しません。")
+            return
+            
+        # 高速ファイルロード（一括読み込み）
+        with open(file_path, 'r', encoding='utf-8') as f:
+            plain_text = f.read()
+            
+        print("暗号化処理中...")
+        cipher_text = fast_encrypt(plain_text, base_key)
+        
+        # 全体26文字制限のチェック
+        if not (5 <= len(cipher_text) <= 26):
+            print(f"【警告】暗号化後の長さ（{len(cipher_text)}文字）が制限（5〜26文字）を超えました。")
+            print("※元のテキストをさらに短くする必要があります。")
+            return
+            
+        # 暗号化ファイルの高速保存
+        out_path = file_path + ".enc"
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(cipher_text)
+        print(f"高速保存完了: {out_path} (暗号文: {cipher_text})")
+        
+    elif mode == 'D':
+        if not os.path.exists(file_path):
+            print("エラー: 指定されたファイルが存在しません。")
+            return
+            
+        # 暗号化ファイルの高速ロード
+        with open(file_path, 'r', encoding='utf-8') as f:
+            cipher_text = f.read().strip()
+            
+        # 長さの事前バリデーション
+        if not (5 <= len(cipher_text) <= 26):
+            print(f"【エラー】ファイル内の暗号文が5〜26文字の範囲外です（現在{len(cipher_text)}文字）。")
+            return
+            
+        print("復号処理中...")
+        plain_text = fast_decrypt(cipher_text, base_key)
+        
+        # 復号ファイルの高速保存
+        out_path = file_path.replace(".enc", "") + ".dec.txt"
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(plain_text)
+        print(f"高速復号完了: {out_path} (復号結果: {plain_text})")
+
+def main():
+    print("=== 超高速・多パターン暗号化システム（ファイルロード対応） ===")
+    
+    key1 = input("1つ目のキーを入力してください: ")
+    key2 = input("2つ目のキーを入力してください: ")
+    key3 = input("3つ目のキーを入力してください: ")
+    
+    base_key = generate_base_key(key1, key2, key3)
+    
+    mode = input("decode or codex? (D/C): ").strip().upper()
+    
+    if mode in ('C', 'D'):
+        handle_file_operations(mode, base_key)
+    else:
+        print("エラー: 'C' または 'D' を入力してください。")
+
+if __name__ == "__main__":
+    main()】
+            `;
+
+            try {
+                await py.runPythonAsync(code);
+                const out = await py.runPythonAsync("sys.stdout.getvalue()");
+                res.innerText = out || "完了（出力なし）";
+                // 次回実行のためにバッファをリセット
+                await py.runPythonAsync("sys.stdout.seek(0); sys.stdout.truncate(0)");
+            } catch (e) {
+                res.innerText = 'エラー:\n' + e.message;
+            }
+        }
+    </script>
+</body>
+</html>
